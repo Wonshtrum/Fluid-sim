@@ -1,0 +1,11 @@
+html {
+	width: 100%;
+	height: 100%;
+	margin: 0;
+}
+canvas {
+	border: solid #8888 1px;
+	width: 400px;
+	height: 400px;
+	image-rendering: crisp-edges;
+}
