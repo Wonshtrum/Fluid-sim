@@ -1,34 +1,28 @@
 'use strict';
 
 class Texture {
-	constructor(width, height, format, type, id = 0) {
-		this.id = id;
+	constructor(width, height, internalFormat, format, type, id = 0) {
 		this.width = width;
 		this.height = height;
 		this.data = gl.createTexture();
 		gl.activeTexture(gl.TEXTURE0 + id);
 		gl.bindTexture(gl.TEXTURE_2D, this.data);
-		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
 		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
 		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-		gl.texImage2D(gl.TEXTURE_2D, 0, format, width, height, 0, format, type, null);
+		gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, width, height, 0, format, type, null);
 	}
 
 	attach(id) {
-		this.id = id;
 		gl.activeTexture(gl.TEXTURE0 + id);
 		gl.bindTexture(gl.TEXTURE_2D, this.data);
 		return id;
 	}
-
-	bind() {
-		return this.attach(this.id);
-	}
 }
 
 class FBO {
-	constructor(textureNames, width, height, format = gl.RGBA, type = gl.UNSIGNED_BYTE) {
+	constructor(textureNames, width, height, internalFormat, format, type) {
 		this.n = textureNames.length;
 		this.textures = {};
 		this.attachments = [];
@@ -44,13 +38,17 @@ class FBO {
 
 		for (let i = 0 ; i < this.n ; i++) {
 			this.attachments.push(gl.COLOR_ATTACHMENT0 + i);
-			let texture = new Texture(width, height, format, type, i);
+			let texture = new Texture(width, height, internalFormat, format, type, i);
 			gl.framebufferTexture2D(gl.FRAMEBUFFER, this.attachments[i], gl.TEXTURE_2D, texture.data, 0);
 			this.textures[textureNames[i]] = texture;
 			if (i === 0) {
 				this.texture = texture;
 			}
 		}
+		if(gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+			console.trace("FRAMEBUFFER NOT READY");
+		}
+
 		this.bind();
 	}
 
@@ -58,22 +56,19 @@ class FBO {
 		gl.viewport(0, 0, this.width, this.height);
 		gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo);
 		gl.drawBuffers(this.attachments);
-		for (let texture of Object.values(this.textures)) {
-			texture.bind();
-		}
 	}
 };
 
 class RWFBO {
-	constructor(textureNames, width, height, format = gl.RGBA, type = gl.UNSIGNED_BYTE) {
+	constructor(textureNames, width, height, internalFormat, format, type) {
 		this.width = width;
 		this.height = height;
 
 		this.texelSizeX = 1.0 / width;
 		this.texelSizeY = 1.0 / height;
 
-		this.read = new FBO(textureNames, width, height, format, type);
-		this.write = new FBO(textureNames, width, height, format, type);
+		this.read = new FBO(textureNames, width, height, internalFormat, format, type);
+		this.write = new FBO(textureNames, width, height, internalFormat, format, type);
 	}
 
 	swap() {
@@ -155,7 +150,6 @@ function blit(target, clear = false) {
 		gl.clearColor(0.0, 0.0, 0.0, 1.0);
 		gl.clear(gl.COLOR_BUFFER_BIT);
 	}
-	// CHECK_FRAMEBUFFER_STATUS();
 	RenderPass.pass();
 };
 
@@ -184,7 +178,7 @@ const transferTarget = (() => {
 	const transferProgram = new Shader(transferVertexShader, transferFragmentShader);
 	return (texture, clear = false) => {
 		transferProgram.bind();
-		gl.uniform1i(transferProgram.uniforms.u_tex, texture.bind());
+		gl.uniform1i(transferProgram.uniforms.u_tex, texture.attach(0));
 		blit(null, clear);
 	}
 })();
