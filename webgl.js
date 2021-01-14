@@ -1,5 +1,6 @@
 'use strict';
 
+
 class Texture {
 	constructor(width, height, internalFormat, format, type, id = 0) {
 		this.width = width;

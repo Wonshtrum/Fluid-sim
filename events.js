@@ -1,5 +1,6 @@
 'use strict';
 
+
 const Cursor = {
 	prevCoordX: null,
 	prevCoordY: null,

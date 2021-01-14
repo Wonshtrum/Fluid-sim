@@ -1,31 +1,5 @@
 'use strict';
 
-const base_vsh = compileShader(gl.VERTEX_SHADER, `
-	precision highp float;
-
-	layout(location = 0) in vec2 a_position;
-	out vec2 v_position;
-
-	void main () {
-		v_position = a_position;
-		gl_Position = vec4(a_position*2.0-1.0, 0, 1);
-	}
-`);
-const mrt_fsh = compileShader(gl.FRAGMENT_SHADER, `
-	precision highp float;
-
-	in vec2 v_position;
-	layout(location = 0) out vec4 baseColor;
-	layout(location = 1) out vec4 brightColor;
-
-	void main () {
-		baseColor = vec4(v_position, 0.3, 1);
-		if (distance(v_position, vec2(0.5))>0.2) {
-			brightColor = vec4(v_position, 0.3, 1);
-		}
-	}
-`);
-
 
 const general_vsh = compileShader(gl.VERTEX_SHADER, `
 	precision highp float;
@@ -225,7 +199,6 @@ const advection_fsh = compileShader(gl.FRAGMENT_SHADER, `
 	uniform sampler2D u_velocity;
 	uniform sampler2D u_source;
 	uniform vec2 u_texelSize;
-	uniform vec2 u_dyeTexelSize;
 	uniform float u_dt;
 	uniform float u_dissipation;
 
@@ -234,6 +207,24 @@ const advection_fsh = compileShader(gl.FRAGMENT_SHADER, `
 		vec4 result = texture(u_source, coord);
 		float decay = 1.0 + u_dissipation * u_dt;
 		outColor = result / decay;
+	}`,
+);
+const obstacle_fsh = compileShader(gl.FRAGMENT_SHADER, `
+	precision highp float;
+	precision highp sampler2D;
+
+	in vec2 v_P;
+	layout(location = 0) out vec4 outColor;
+
+	uniform sampler2D u_source;
+
+	void main () {
+		vec4 base = texture(u_source, v_P);
+		if (length(v_P - vec2(0.5))>0.1) {
+			outColor = base;
+		} else {
+			outColor = vec4(0,0,1,1);
+		}
 	}`,
 );
 
@@ -246,20 +237,32 @@ const config = {
 	DENSITY: 0.1,
 	PRESSURE: 1.8,
 	RADIUS: 0.2,
+	STOP_ON_HALT: false,
 }
 
 const resolution = 128;
-const dyeResolution = 512;
-canvas.width = dyeResolution;
-canvas.height = dyeResolution;
 const velocity = new RWFBO(["main"], resolution, resolution, gl.RGBA16F, gl.RGBA, gl.HALF_FLOAT);
 const pressure = new RWFBO(["main"], resolution, resolution, gl.RGBA16F, gl.RGBA, gl.HALF_FLOAT);
 //gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE
-const dye = new RWFBO(["main"], dyeResolution, dyeResolution, gl.RGBA16F, gl.RGBA, gl.HALF_FLOAT);
 const curl = new FBO(["main"], resolution, resolution, gl.RGBA16F, gl.RGBA, gl.HALF_FLOAT);
 const divergence = new FBO(["main"], resolution, resolution, gl.RGBA16F, gl.RGBA, gl.HALF_FLOAT);
 
-const mrtProgram = new Shader(base_vsh, mrt_fsh);
+let dyeResolution = null;
+let dye = null
+let activeTarget = dye;
+function setDyeResolution(resolution) {
+	dyeResolution = resolution;
+	let newDye = new RWFBO(["main"], dyeResolution, dyeResolution, gl.RGBA16F, gl.RGBA, gl.HALF_FLOAT);
+	if (activeTarget === dye) {
+		activeTarget = newDye;
+	}
+	dye = newDye;
+	canvas.width = dyeResolution;
+	canvas.height = dyeResolution;
+}
+setDyeResolution(512);
+
+
 const clearProgram = new Shader(general_vsh, clear_fsh);
 const splatProgram = new Shader(general_vsh, splat_fsh);
 const curlProgram = new Shader(general_vsh, curl_fsh);
@@ -268,19 +271,24 @@ const divergenceProgram = new Shader(general_vsh, divergence_fsh);
 const pressureProgram = new Shader(general_vsh, pressure_fsh);
 const gradienSubtractProgram = new Shader(general_vsh, gradientSubtract_fsh);
 const advectionProgram = new Shader(general_vsh, advection_fsh);
+const obstacleProgram = new Shader(general_vsh, obstacle_fsh);
 
 function update () {
 	const dt = 0.01;
 	applyInputs();
 	step(dt);
-	transferTarget(dye.read.texture, true);
+	if (activeTarget instanceof RWFBO) {
+		transferTarget(activeTarget.read.texture, true);
+	} else {
+		transferTarget(activeTarget.texture, true);
+	}
 	requestAnimationFrame(update);
 }
 update();
 
 function applyInputs() {
 	if (Cursor.moved) {
-		Cursor.moved = true;
+		Cursor.moved = !config.STOP_ON_HALT;
 		splat(Cursor.coordX, Cursor.coordY, Cursor.coordX - Cursor.prevCoordX, Cursor.coordY - Cursor.prevCoordY)
 	}
 }
@@ -302,6 +310,13 @@ function splat(x, y, dx, dy) {
 	dye.swap();
 }
 
+function obstacle(target) {
+	obstacleProgram.bind();
+	gl.uniform1i(obstacleProgram.uniforms.u_source, target.read.texture.attach(0));
+	blit(target.write);
+	target.swap();
+}
+
 function step(dt) {
 	curlProgram.bind();
 	gl.uniform2f(curlProgram.uniforms.u_texelSize, velocity.texelSizeX, velocity.texelSizeY);
@@ -316,6 +331,7 @@ function step(dt) {
 	gl.uniform1f(vorticityProgram.uniforms.u_dt, dt);
 	blit(velocity.write);
 	velocity.swap();
+	//obstacle(velocity);
 
 	divergenceProgram.bind();
 	gl.uniform2f(divergenceProgram.uniforms.u_texelSize, velocity.texelSizeX, velocity.texelSizeY);
@@ -343,6 +359,7 @@ function step(dt) {
 	gl.uniform1i(gradienSubtractProgram.uniforms.u_velocity, velocity.read.texture.attach(1));
 	blit(velocity.write);
 	velocity.swap();
+	//obstacle(velocity);
 
 	advectionProgram.bind();
 	gl.uniform2f(advectionProgram.uniforms.u_texelSize, velocity.texelSizeX, velocity.texelSizeY);
@@ -354,8 +371,9 @@ function step(dt) {
 	gl.uniform1f(advectionProgram.uniforms.u_dissipation, config.VELOCITY_DISSIPATION);
 	blit(velocity.write);
 	velocity.swap();
+	obstacle(velocity);
 
-	gl.uniform2f(advectionProgram.uniforms.u_dyeTexelSize, dye.texelSizeX, dye.texelSizeY);
+	advectionProgram.bind();
 	gl.uniform1i(advectionProgram.uniforms.u_velocity, velocity.read.texture.attach(0));
 	gl.uniform1i(advectionProgram.uniforms.u_source, dye.read.texture.attach(1));
 	gl.uniform1f(advectionProgram.uniforms.u_dissipation, config.DYE_DISSIPATION);

@@ -1,3 +1,6 @@
+'use strict';
+
+
 class Shader {
 	constructor(vertShader, fragShader) {
 		this.program = gl.createProgram();

@@ -1,5 +1,6 @@
 'use strict';
 
+
 function initWebGL(canvas) {
 	let gl = canvas.getContext("webgl2", { preserveDrawingBuffer: true, premultipliedAlpha: false });
 	gl.getExtension('EXT_color_buffer_float');
